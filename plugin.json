@@ -1,0 +1,23 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "context",
+  "displayName": "Context",
+  "version": "1.2.0",
+  "description": "Inspect live context window usage, prompt cache efficiency, and token breakdown across messages, tools, MCP schemas, rules, and skills.",
+  "author": "ahmetdotsh",
+  "homepage": "https://github.com/ahmetdotsh/agy-context",
+  "repository": "https://github.com/ahmetdotsh/agy-context",
+  "license": "MIT",
+  "keywords": [
+    "context",
+    "tokens",
+    "prompt-cache",
+    "mcp",
+    "sidecar",
+    "telemetry"
+  ],
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Open the Context panel for this conversation"
+  ]
+}

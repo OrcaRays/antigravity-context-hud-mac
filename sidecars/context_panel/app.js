@@ -84,6 +84,8 @@
     const v = Number(n) || 0;
     if (v === 1048576 || v === 1000000) return '1M';
     if (v === 2097152 || v === 2000000) return '2M';
+    if (v === 512000 || v === 524288) return '512k';
+    if (v === 256000 || v === 262144) return '256k';
     if (v === 200000) return '200k';
     if (v === 131072 || v === 128000) return '128k';
     if (v === 65536) return '64k';
@@ -586,9 +588,23 @@
     $('used-tok').textContent = fmtTok(snap.usedTokens);
 
     const cache = snap.cache || {};
-    $('cache-val').textContent = cache.lastPromptTokens > 0
-      ? `${cache.cacheHitRatio}% cached (${fmtTok(cache.cachedTokens)})`
-      : '0% cached';
+    const cacheMeta = $('cache-meta');
+    if (cache.lastPromptTokens > 0) {
+      const hasSess = typeof cache.sessionCacheHitRatio === 'number' && (snap.plannerTurnCount || 0) > 1;
+      const sessHtml = hasSess
+        ? ` <span class="cache-sub">· ${esc(cache.sessionCacheHitRatio)}% session</span>`
+        : '';
+      $('cache-val').innerHTML = `${esc(cache.cacheHitRatio)}% (${esc(fmtTok(cache.cachedTokens))})${sessHtml}`;
+      if (cacheMeta) {
+        const sessTip = hasSess
+          ? ` · Session total: ${fmtTok(cache.cumulativeCachedTokens || 0)} / ${fmtTok(cache.cumulativeInputTokens || 0)} cached (${cache.sessionCacheHitRatio}%)`
+          : '';
+        cacheMeta.title = `Last turn: ${fmtTok(cache.cachedTokens)} / ${fmtTok(cache.lastPromptTokens)} cached (${cache.cacheHitRatio}%)${sessTip}`;
+      }
+    } else {
+      $('cache-val').textContent = '0%';
+      if (cacheMeta) cacheMeta.title = 'Prompt cache hit ratio on the latest turn';
+    }
 
     const cpCount = snap.compaction?.count || 0;
     const cpSaved = snap.compaction?.totalSavedTokens || 0;
@@ -605,8 +621,10 @@
     const ratioGroup = $('ratio-group');
     if (ratioGroup) {
       const modelName = snap.model?.label || snap.model?.id || 'Active model';
-      const maxExact = Number(snap.contextLimit || 1048576).toLocaleString('en-US');
-      ratioGroup.title = `${modelName} · ${maxExact} max tokens`;
+      const maxExact = Number(snap.contextLimit || 256000).toLocaleString('en-US');
+      const rawMax = Number(snap.modelMaxTokens || 0);
+      const rawNote = rawMax > (snap.contextLimit || 0) ? ` (model max ${fmtLimit(rawMax)})` : '';
+      ratioGroup.title = `${modelName} · ${maxExact} Antigravity limit${rawNote}`;
     }
 
     renderVisuals(snap);

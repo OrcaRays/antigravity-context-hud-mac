@@ -12,10 +12,10 @@ agy plugin install https://github.com/ahmetdotsh/agy-context
 
 ## Features
 
-- **Live conversation telemetry**: Updates automatically as turns complete, adapting its maximum context limit to the active model (`1M`, `200k`, `128k`, etc.).
+- **Antigravity-accurate context limit**: Reads Antigravity's actual per-conversation compaction cap (`256k` standard, `512k` Orchestrator, etc.) directly from local session metadata, with the underlying model limit shown on hover.
 - **Dual visualization**: Toggle between a proportional segmented usage bar and a `10x10` treemap grid with synchronized hover states.
 - **Full category breakdown**: Inspect tokens across user messages, agent responses, tool calls, MCP schemas (active and deferred), rules, skills, and compaction savings.
-- **Prompt cache & compaction stats**: See live cache hit percentage, cached token volume, and compaction history without leaving the IDE.
+- **Last-turn & session cache stats**: Clarifies both the latest-turn prompt cache hit rate and cumulative whole-session cache efficiency, plus compaction savings without extra LLM calls.
 - **100% local**: Reads local session and workspace telemetry directly inside Antigravity.
 
 ## Usage

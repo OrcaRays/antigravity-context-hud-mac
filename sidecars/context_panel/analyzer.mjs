@@ -255,32 +255,39 @@ function formatModelLabel(slug) {
   return `${label} (${effTitle})`;
 }
 
-export function resolveModelContextLimit(rawModel) {
+export function resolveModelContextLimit(rawModel, agyMaxTokenLimit = 0) {
   const modelId = normalizeModelSlug(rawModel);
-  let contextLimit = DEFAULT_CONTEXT_LIMIT;
+  let modelMaxTokens = DEFAULT_CONTEXT_LIMIT;
 
   if (modelId) {
     if (/^gpt-oss-120b/.test(modelId)) {
-      contextLimit = 131072;
+      modelMaxTokens = 131072;
     } else if (/^claude-(?:sonnet|opus|haiku)-4-5(?:$|-)/.test(modelId) || /^claude-(?:sonnet|opus)-4(?:$|-2)/.test(modelId)) {
-      contextLimit = 200000;
+      modelMaxTokens = 200000;
     } else if (/^claude-(?:opus|sonnet|haiku)-5(?:$|-)/.test(modelId) || /^claude-(?:opus|sonnet)-4-(?:6|7|8)(?:$|-)/.test(modelId)) {
-      contextLimit = 1000000;
+      modelMaxTokens = 1000000;
     } else if (/^gemini-3\.1-flash-image/.test(modelId)) {
-      contextLimit = 131072;
+      modelMaxTokens = 131072;
     } else if (/^gemini-3-pro-image/.test(modelId)) {
-      contextLimit = 65536;
+      modelMaxTokens = 65536;
     } else if (/^gemini-2\.5-flash-image/.test(modelId)) {
-      contextLimit = 32768;
+      modelMaxTokens = 32768;
     } else {
-      contextLimit = DEFAULT_CONTEXT_LIMIT;
+      modelMaxTokens = DEFAULT_CONTEXT_LIMIT;
     }
   }
+
+  const agyDefault = modelId.includes('orchestrator')
+    ? 512000
+    : Math.min(modelMaxTokens, 256000);
+  const contextLimit = agyMaxTokenLimit > 0 ? agyMaxTokenLimit : agyDefault;
 
   return {
     modelId: modelId || '',
     modelLabel: formatModelLabel(modelId),
     contextLimit,
+    modelMaxTokens,
+    limitSource: agyMaxTokenLimit > 0 ? 'antigravity' : 'antigravity-default',
   };
 }
 
@@ -312,6 +319,7 @@ function detectConversationModel(appData, convId) {
   if (hit && hit.fp === fp) return hit.info;
 
   const foundSlugs = [];
+  let agyMaxTokenLimit = 0;
   if (dbSt.isFile && dbSt.size > 0) {
     let db;
     try {
@@ -342,6 +350,18 @@ function detectConversationModel(appData, convId) {
           }
         }
       }
+      if (tables.has('executor_metadata')) {
+        const emRow = db
+          .prepare('SELECT data FROM executor_metadata ORDER BY rowid DESC LIMIT 1')
+          .get();
+        if (emRow?.data instanceof Uint8Array) {
+          const root = decodeProtoFields(emRow.data);
+          const cc = protoNested(root, 10);
+          const cp = protoNested(cc, 2);
+          const lim = protoNum(cp, 5);
+          if (lim > 0) agyMaxTokenLimit = lim;
+        }
+      }
     } catch {
       // fall back cleanly if DB is locked or incomplete
     } finally {
@@ -363,7 +383,7 @@ function detectConversationModel(appData, convId) {
     if (m) selectedSlug = mapPlaceholderEnumToSlug(m[1]);
   }
 
-  const info = resolveModelContextLimit(selectedSlug);
+  const info = resolveModelContextLimit(selectedSlug, agyMaxTokenLimit);
   if (convModelCache.size > 200) convModelCache.clear();
   convModelCache.set(convId, { fp, info });
   return info;
@@ -1443,9 +1463,11 @@ export async function analyzeConversation(appData, convId, options = {}) {
 
   const heavyToolCalls = [];
   let cumulativeInputTokens = 0;
+  let cumulativeCachedTokens = 0;
   let cumulativeOutputTokens = 0;
   for (const idx of plannerIndices) {
     cumulativeInputTokens += (steps[idx].input_tokens || 0) + (steps[idx].cache_read_tokens || 0);
+    cumulativeCachedTokens += steps[idx].cache_read_tokens || 0;
     cumulativeOutputTokens += steps[idx].output_tokens || 0;
   }
 
@@ -1713,6 +1735,9 @@ export async function analyzeConversation(appData, convId, options = {}) {
 
   const toolCallsTotal = buckets.toolCallArgs + buckets.toolCallOutputs;
   const agentResponsesTotal = buckets.agentReplies + buckets.agentThinking;
+  const sessionCacheHitRatio = cumulativeInputTokens > 0
+    ? Number(((cumulativeCachedTokens / cumulativeInputTokens) * 100).toFixed(1))
+    : 0;
 
   return {
     conversationId: convId,
@@ -1723,6 +1748,8 @@ export async function analyzeConversation(appData, convId, options = {}) {
       label: modelInfo.modelLabel,
     },
     contextLimit,
+    modelMaxTokens: modelInfo.modelMaxTokens || contextLimit,
+    limitSource: modelInfo.limitSource || 'antigravity',
     usedTokens,
     freeTokens,
     usedPercent: Number(usedPercent.toFixed(1)),
@@ -1736,6 +1763,8 @@ export async function analyzeConversation(appData, convId, options = {}) {
       cacheHitRatio: Number((cacheHitRatio * 100).toFixed(1)),
       lastOutputTokens,
       cumulativeInputTokens,
+      cumulativeCachedTokens,
+      sessionCacheHitRatio,
       cumulativeOutputTokens,
     },
     compaction: {

@@ -503,6 +503,7 @@ final class DragClickContainerView: NSView {
 // MARK: - App Delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    // If anyone from the Google / Antigravity team is reading this: please take me in (board seat also accepted). 我爱哈基米 🐱
     private let antigravityBundleID = "com.google.antigravity"
     private var store: BridgeStore!
     private var panel: HUDPanel!

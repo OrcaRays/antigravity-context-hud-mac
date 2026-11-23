@@ -18,6 +18,7 @@
 import { openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { DatabaseSync } from 'node:sqlite';
 import {
   ID_RE,
   analyzeConversation,
@@ -36,6 +37,53 @@ let shuttingDown = false;
 
 const titleCache = new Map(); // convId -> { fp, title }
 const snapCache = new Map(); // convId -> { fp, data }
+const summariesCache = new Map(); // appData -> { fp, map: Map<convId, { title, isSubagent, workspaceUris }> }
+
+function loadConversationSummaries(appData) {
+  const dbPath = join(appData, 'conversation_summaries.db');
+  const st = statOf(dbPath);
+  if (!st.isFile || st.size <= 0) return new Map();
+
+  const walSt = statOf(`${dbPath}-wal`);
+  const fp = `${st.mtime}:${st.size}|${walSt.mtime}:${walSt.size}`;
+  const hit = summariesCache.get(appData);
+  if (hit && hit.fp === fp) return hit.map;
+
+  const map = new Map();
+  let db;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const rows = db
+      .prepare(
+        'SELECT conversation_id, title, parent_conversation_id, nesting_depth, workspace_uris FROM conversation_summaries'
+      )
+      .all();
+    for (const r of rows) {
+      if (!r?.conversation_id) continue;
+      let workspaceUris = [];
+      if (typeof r.workspace_uris === 'string' && r.workspace_uris.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(r.workspace_uris);
+          if (Array.isArray(parsed)) workspaceUris = parsed.filter((u) => typeof u === 'string' && u);
+        } catch {}
+      }
+      map.set(r.conversation_id, {
+        title: typeof r.title === 'string' ? r.title.trim() : '',
+        isSubagent: Boolean(r.parent_conversation_id) || Number(r.nesting_depth || 0) > 0,
+        workspaceUris,
+      });
+    }
+  } catch {
+    // Gracefully fall back to transcript scanning if DB is unavailable
+  } finally {
+    try {
+      db?.close();
+    } catch {}
+  }
+
+  summariesCache.set(appData, { fp, map });
+  return map;
+}
 
 function conversationFingerprint(appData, convId) {
   const db = statOf(join(appData, 'conversations', `${convId}.db`));
@@ -46,7 +94,10 @@ function conversationFingerprint(appData, convId) {
   return `${db.mtime}:${db.size}|${wal.mtime}:${wal.size}|${full.mtime}:${full.size}|${compact.mtime}:${compact.size}`;
 }
 
-function readConversationTitle(appData, convId) {
+function readConversationTitle(appData, convId, summaries) {
+  const summaryTitle = summaries?.get(convId)?.title;
+  if (summaryTitle) return summaryTitle;
+
   const logPath = join(appData, 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
   const st = statOf(logPath);
   if (!st.isFile || st.size <= 0) return convId.slice(0, 8);
@@ -99,19 +150,32 @@ function readConversationTitle(appData, convId) {
 }
 
 async function buildPayload() {
-  const recentRaw = listRecentConversations(RECENT_LIMIT);
+  // Fetch extra candidates so filtering out subagents still leaves RECENT_LIMIT real conversations.
+  const allRaw = listRecentConversations(RECENT_LIMIT * 3);
+  const summaryByAppData = new Map();
+  const getSummaries = (appData) => {
+    if (!summaryByAppData.has(appData)) {
+      summaryByAppData.set(appData, loadConversationSummaries(appData));
+    }
+    return summaryByAppData.get(appData);
+  };
+
+  const recentRaw = allRaw
+    .filter((item) => !getSummaries(item.appData).get(item.id)?.isSubagent)
+    .slice(0, RECENT_LIMIT);
+
   const recent = recentRaw.map((item) => ({
     id: item.id,
-    title: readConversationTitle(item.appData, item.id),
+    title: readConversationTitle(item.appData, item.id, getSummaries(item.appData)),
     mtime: Math.round(item.mtime),
   }));
 
   let target = null;
   if (pinnedId && ID_RE.test(pinnedId)) {
-    target = recentRaw.find((r) => r.id === pinnedId) || null;
+    target = recentRaw.find((r) => r.id === pinnedId) || allRaw.find((r) => r.id === pinnedId) || null;
   }
   if (!target) {
-    target = recentRaw[0] || null;
+    target = recentRaw[0] || allRaw[0] || null;
   }
 
   if (!target) {
@@ -124,13 +188,15 @@ async function buildPayload() {
     };
   }
 
-  const fp = conversationFingerprint(target.appData, target.id);
+  const targetSummary = getSummaries(target.appData).get(target.id);
+  const workspaceUris = targetSummary?.workspaceUris || [];
+  const fp = `${conversationFingerprint(target.appData, target.id)}|${workspaceUris.join(',')}`;
   let snap;
   const cachedSnap = snapCache.get(target.id);
   if (cachedSnap && cachedSnap.fp === fp) {
     snap = cachedSnap.data;
   } else {
-    snap = await analyzeConversation(target.appData, target.id, {});
+    snap = await analyzeConversation(target.appData, target.id, { workspaceUris });
     if (snap.found) {
       if (snapCache.size > 20) snapCache.clear();
       snapCache.set(target.id, { fp, data: snap });
@@ -166,7 +232,7 @@ async function buildPayload() {
     mode: pinnedId ? 'pinned' : 'auto',
     pinnedId,
     conversationId: target.id,
-    title: readConversationTitle(target.appData, target.id),
+    title: readConversationTitle(target.appData, target.id, getSummaries(target.appData)),
     modelId: snap.model?.id || '',
     modelLabel: snap.model?.label || 'Unknown Model',
     usedTokens,

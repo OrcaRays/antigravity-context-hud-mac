@@ -137,6 +137,7 @@ final class BridgeStore: ObservableObject {
     @Published var snapshot: ContextSnapshot?
     @Published var bridgeStatus: String = "Connecting…"
     @Published var switchingToId: String? = nil
+    @Published var hasScreenRecordingPermission: Bool = CGPreflightScreenCaptureAccess()
 
     @Published var autoHideOutsideAntigravity: Bool {
         didSet {
@@ -157,6 +158,7 @@ final class BridgeStore: ObservableObject {
     var onClosePopover: (() -> Void)?
     var onResetPosition: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onRequestWindowTrackingPermission: (() -> Void)?
     var currentWindowTitleProvider: (() -> String?)?
 
     private var lastSentWindowTitle: String = ""
@@ -527,12 +529,35 @@ struct DetailPopoverView: View {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 9, weight: .bold))
                         }
-                        Text("Auto (Latest)")
+                        Text(store.hasScreenRecordingPermission ? "Auto (Active Tab)" : "Auto (Latest)")
                             .font(.system(size: 10.5, weight: .medium))
                     }
                 }
                 .buttonStyle(.borderless)
                 .foregroundColor(snap?.mode != "pinned" ? usageColor(for: 0, isLight: isLight) : .secondary)
+            }
+
+            if !store.hasScreenRecordingPermission {
+                Button(action: { store.onRequestWindowTrackingPermission?() }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "macwindow.on.rectangle")
+                            .font(.system(size: 10))
+                        Text("Enable Active-Tab Auto-Follow (Screen Recording)")
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .foregroundColor(isLight ? Color(hex: "#0369a1") : Color(hex: "#38bdf8"))
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill((isLight ? Color(hex: "#0284c7") : Color(hex: "#38bdf8")).opacity(0.12))
+                    )
+                }
+                .buttonStyle(.plain)
             }
 
             ScrollView {
@@ -677,6 +702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onClosePopover = { [weak self] in self?.hideDetailPanel() }
         store.onResetPosition = { [weak self] in self?.resetPanelPosition() }
         store.onQuit = { NSApp.terminate(nil) }
+        store.onRequestWindowTrackingPermission = { [weak self] in self?.requestWindowTrackingPermission() }
         store.currentWindowTitleProvider = { [weak self] in self?.frontmostAntigravityWindowTitle() }
 
         setupStatusItem()
@@ -714,7 +740,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncWindowTitleIfNeeded()
     }
 
+    private func requestWindowTrackingPermission() {
+        CGRequestScreenCaptureAccess()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func syncWindowTitleIfNeeded() {
+        let granted = CGPreflightScreenCaptureAccess()
+        if store.hasScreenRecordingPermission != granted {
+            store.hasScreenRecordingPermission = granted
+        }
         let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let own = Bundle.main.bundleIdentifier ?? ""
         guard front == antigravityBundleID || front == own || !store.autoHideOutsideAntigravity else { return }

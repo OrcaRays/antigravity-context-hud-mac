@@ -19,6 +19,14 @@ struct RecentSession: Codable, Identifiable, Equatable {
     let mtime: Double
 }
 
+struct SessionCost: Codable, Equatable {
+    let available: Bool
+    let apiUsd: Double
+    let cacheSavedUsd: Double
+    let withoutCacheUsd: Double
+    let rateSource: String?
+}
+
 struct ContextSnapshot: Codable, Equatable {
     let found: Bool
     let mode: String?
@@ -38,6 +46,7 @@ struct ContextSnapshot: Codable, Equatable {
     let compactionCount: Int?
     let totalSavedTokens: Int?
     let stepCount: Int?
+    let cost: SessionCost?
     let breakdown: [BreakdownItem]?
     let recent: [RecentSession]?
     let error: String?
@@ -64,6 +73,19 @@ func formatCap(_ n: Int) -> String {
         return "\(n / 1_000)K"
     }
     return "\(n)"
+}
+
+func formatUsd(_ amount: Double) -> String {
+    if amount >= 100 {
+        return String(format: "$%.0f", amount)
+    } else if amount >= 10 {
+        return String(format: "$%.2f", amount)
+    } else if amount >= 0.01 {
+        return String(format: "$%.2f", amount)
+    } else if amount > 0 {
+        return String(format: "$%.3f", amount)
+    }
+    return "$0.00"
 }
 
 func relativeTime(_ mtimeMs: Double) -> String {
@@ -381,6 +403,7 @@ struct DetailPopoverView: View {
             barSection
             breakdownSection
             cacheSection
+            costSection
             Divider()
             sessionSection
             Divider()
@@ -507,6 +530,38 @@ struct DetailPopoverView: View {
                 Text("\(snap?.compactionCount ?? 0)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
             }
+        }
+    }
+
+    @ViewBuilder
+    private var costSection: some View {
+        if let cost = snap?.cost, cost.available {
+            let green = isLight ? Color(hex: "#059669") : Color(hex: "#34d399")
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Est. API Value")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Text(formatUsd(cost.apiUsd))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.primary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Saved via Cache")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Text("+\(formatUsd(cost.cacheSavedUsd))")
+                        .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(green)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(green.opacity(isLight ? 0.08 : 0.10))
+            )
         }
     }
 

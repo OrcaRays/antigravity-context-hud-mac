@@ -25,6 +25,7 @@ import {
   listRecentConversations,
   statOf,
 } from '../sidecars/context_panel/analyzer.mjs';
+import { estimateSessionCost } from './pricing.mjs';
 
 const POLL_MS = 1500;
 const RECENT_LIMIT = 10;
@@ -275,6 +276,8 @@ async function buildPayload() {
     { key: 'skillsRules', label: 'Skills & Rules', tokens: (cats.skills || 0) + (cats.rulesFiles || 0) + (cats.customAgents || 0), color: '#fb923c' },
   ].filter((c) => c.tokens > 0);
 
+  const cost = estimateSessionCost(snap.model?.id || '', snap.cache);
+
   return {
     found: true,
     mode: pinnedId ? 'pinned' : 'auto',
@@ -294,6 +297,7 @@ async function buildPayload() {
     compactionCount: snap.compaction?.count || 0,
     totalSavedTokens: snap.compaction?.totalSavedTokens || 0,
     stepCount: snap.stepCount || 0,
+    cost,
     breakdown,
     recent,
     updatedAt: Date.now(),
@@ -312,6 +316,7 @@ function signatureOf(payload) {
     scache: payload.sessionCacheHitRatio,
     comp: payload.compactionCount,
     steps: payload.stepCount,
+    cost: payload.cost?.apiUsd,
     recent: payload.recent?.map((r) => `${r.id}:${r.mtime}`),
   });
 }

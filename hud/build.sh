@@ -62,8 +62,9 @@ if [ -f "$ROOT/hud/macos/Resources/AppIcon.icns" ]; then
   cp "$ROOT/hud/macos/Resources/AppIcon.icns" "$RES_DIR/AppIcon.icns"
 fi
 
-# Bundle bridge.mjs and unmodified upstream analyzer.mjs so the .app is 100% self-contained.
+# Bundle bridge.mjs, pricing.mjs, and unmodified upstream analyzer.mjs so the .app is 100% self-contained.
 cp "$ROOT/hud/bridge.mjs" "$RES_DIR/hud/bridge.mjs"
+cp "$ROOT/hud/pricing.mjs" "$RES_DIR/hud/pricing.mjs"
 cp "$ROOT/sidecars/context_panel/analyzer.mjs" "$RES_DIR/sidecars/context_panel/analyzer.mjs"
 chmod +x "$RES_DIR/hud/bridge.mjs"
 

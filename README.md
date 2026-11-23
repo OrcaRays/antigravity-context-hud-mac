@@ -24,7 +24,8 @@ Antigravity 2.0's official Sidecar UI API currently only supports right-hand aux
   - Segmented usage bar + remaining tokens before compaction
   - Category breakdown (Tool Calls, System & Tools, Agent & Thinking, User Messages, MCP Tools, Skills & Rules)
   - Last-turn & whole-session prompt cache hit rates + compaction count
-  - **Auto (Latest)** tracking or 1-click pinning to any recent conversation
+  - **Est. API Value & Cache Savings** for the active session (auto-synced with public LiteLLM pricing + built-in fallback)
+  - **Auto (Active Tab)** tracking via window title or 1-click pinning to any recent conversation
 - **Ultra-Lightweight**: Native Swift binary (`LSUIElement`, no Dock icon) + persistent local NDJSON bridge (~36 MB RAM, ~0.1% CPU idle, zero npm dependencies).
 
 ## Download (Recommended)
@@ -76,4 +77,5 @@ Because `sidecars/context_panel/analyzer.mjs` is kept **100% untouched** from up
 ## Credits & License
 
 - Core token accounting & session metadata parser: [`ahmetdotsh/agy-context`](https://github.com/ahmetdotsh/agy-context) by Ahmet Sahin (MIT).
+- API-equivalent pricing approach: inspired by [`ahmetdotsh/agy-usage`](https://github.com/ahmetdotsh/agy-usage) (MIT) & [LiteLLM](https://github.com/BerriAI/litellm).
 - Native macOS HUD & NDJSON bridge: MIT License — see [LICENSE](LICENSE).

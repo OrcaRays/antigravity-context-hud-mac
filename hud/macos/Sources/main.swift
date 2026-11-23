@@ -346,213 +346,234 @@ struct DetailPopoverView: View {
     @ObservedObject var store: BridgeStore
     @Environment(\.colorScheme) private var colorScheme
 
+    private var isLight: Bool { colorScheme == .light }
+    private var snap: ContextSnapshot? { store.snapshot }
+    private var used: Int { snap?.usedTokens ?? 0 }
+    private var limit: Int { snap?.contextLimit ?? 512_000 }
+    private var free: Int { snap?.freeSpace ?? max(0, limit - used) }
+    private var pct: Double { snap?.percent ?? 0 }
+    private var accent: Color { usageColor(for: pct, isLight: isLight) }
+
     var body: some View {
-        let isLight = (colorScheme == .light)
-        let snap = store.snapshot
-        let used = snap?.usedTokens ?? 0
-        let limit = snap?.contextLimit ?? 512_000
-        let free = snap?.freeSpace ?? max(0, limit - used)
-        let pct = snap?.percent ?? 0
-        let accent = usageColor(for: pct, isLight: isLight)
+        let cardFill = isLight ? Color.white.opacity(0.95) : Color(hex: "#1c1c1e").opacity(0.96)
+        let cardStroke = isLight ? Color.black.opacity(0.12) : Color.white.opacity(0.14)
 
         VStack(alignment: .leading, spacing: 11) {
-            // Header
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(snap?.modelLabel ?? "Antigravity Context")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("\(formatCap(limit)) compaction cap · \(snap?.mode == "pinned" ? "Pinned" : "Auto latest")")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Text(String(format: "%.1f%%", pct))
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
-                    .foregroundColor(accent)
-
-                Button(action: { store.onClosePopover?() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(.secondary.opacity(0.75))
-                }
-                .buttonStyle(.plain)
-                .help("Close")
-            }
-
-            // Segmented Bar
-            VStack(alignment: .leading, spacing: 5) {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.primary.opacity(0.1))
-                        HStack(spacing: 1) {
-                            ForEach(snap?.breakdown ?? []) { item in
-                                let frac = limit > 0 ? CGFloat(item.tokens) / CGFloat(limit) : 0
-                                Rectangle()
-                                    .fill(Color(hex: item.color))
-                                    .frame(width: max(frac > 0 ? 2 : 0, geo.size.width * min(1, frac)))
-                            }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                }
-                .frame(height: 8)
-
-                HStack {
-                    Text("\(formatTokens(used)) used")
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("\(formatTokens(free)) free before compaction")
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(accent)
-                }
-            }
-
-            // Breakdown
-            if let items = snap?.breakdown, !items.isEmpty {
-                VStack(spacing: 4) {
-                    ForEach(items) { item in
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(Color(hex: item.color))
-                                .frame(width: 6, height: 6)
-                            Text(item.label)
-                                .font(.system(size: 11))
-                                .foregroundColor(.primary.opacity(0.88))
-                            Spacer()
-                            Text(formatTokens(item.tokens))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
-            }
-
-            // Cache & Compaction
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Last Cache")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Text(String(format: "%.1f%%", snap?.cacheHitRatio ?? 0))
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Session Cache")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Text(String(format: "%.1f%%", snap?.sessionCacheHitRatio ?? 0))
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("Compactions")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Text("\(snap?.compactionCount ?? 0)")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                }
-            }
-
+            headerSection
+            barSection
+            breakdownSection
+            cacheSection
             Divider()
-
-            // Session Switcher
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text("Session")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button(action: { store.selectAuto() }) {
-                        HStack(spacing: 3) {
-                            if store.switchingToId == "auto" {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                    .scaleEffect(0.7)
-                            } else if snap?.mode != "pinned" {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 9, weight: .bold))
-                            }
-                            Text("Auto (Latest)")
-                                .font(.system(size: 10.5, weight: .medium))
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(snap?.mode != "pinned" ? usageColor(for: 0, isLight: isLight) : .secondary)
-                }
-
-                ScrollView {
-                    VStack(spacing: 2) {
-                        ForEach(snap?.recent ?? []) { item in
-                            let selected = (item.id == snap?.conversationId)
-                            let loading = (store.switchingToId == item.id)
-                            Button(action: { store.selectSession(item.id) }) {
-                                HStack(spacing: 6) {
-                                    if loading {
-                                        ProgressView()
-                                            .controlSize(.mini)
-                                            .scaleEffect(0.65)
-                                            .frame(width: 8, height: 8)
-                                    } else {
-                                        Circle()
-                                            .fill(selected ? (isLight ? Color(hex: "#0284c7") : Color(hex: "#38bdf8")) : Color.clear)
-                                            .frame(width: 5, height: 5)
-                                    }
-                                    Text(item.title)
-                                        .font(.system(size: 11))
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                        .foregroundColor(selected || loading ? .primary : .secondary)
-                                    Spacer()
-                                    Text(relativeTime(item.mtime))
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(.secondary.opacity(0.75))
-                                }
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .fill(selected || loading ? Color.primary.opacity(0.08) : Color.clear)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .frame(height: 116)
-            }
-
+            sessionSection
             Divider()
-
-            // Footer
-            HStack {
-                Toggle("Show Cache", isOn: $store.showCacheInPill)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 11))
-                Spacer()
-                Button("Reset Pos") { store.onResetPosition?() }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                Button("Quit") { store.onQuit?() }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 11))
-                    .foregroundColor(isLight ? Color(hex: "#dc2626") : Color(hex: "#f87171"))
-            }
+            footerSection
         }
         .padding(14)
         .frame(width: 312)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isLight ? Color.white.opacity(0.95) : Color(hex: "#1c1c1e").opacity(0.96))
+                .fill(cardFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(isLight ? Color.black.opacity(0.12) : Color.white.opacity(0.14), lineWidth: 0.75)
+                        .strokeBorder(cardStroke, lineWidth: 0.75)
                 )
         )
+    }
+
+    @ViewBuilder
+    private var headerSection: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(snap?.modelLabel ?? "Antigravity Context")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("\(formatCap(limit)) compaction cap · \(snap?.mode == "pinned" ? "Pinned" : "Auto latest")")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Text(String(format: "%.1f%%", pct))
+                .font(.system(size: 15, weight: .bold, design: .monospaced))
+                .foregroundColor(accent)
+
+            Button(action: { store.onClosePopover?() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary.opacity(0.75))
+            }
+            .buttonStyle(.plain)
+            .help("Close")
+        }
+    }
+
+    @ViewBuilder
+    private var barSection: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.primary.opacity(0.1))
+                    HStack(spacing: 1) {
+                        ForEach(snap?.breakdown ?? []) { item in
+                            let frac = limit > 0 ? CGFloat(item.tokens) / CGFloat(limit) : 0
+                            Rectangle()
+                                .fill(Color(hex: item.color))
+                                .frame(width: max(frac > 0 ? 2 : 0, geo.size.width * min(1, frac)))
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+            }
+            .frame(height: 8)
+
+            HStack {
+                Text("\(formatTokens(used)) used")
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("\(formatTokens(free)) free before compaction")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(accent)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var breakdownSection: some View {
+        if let items = snap?.breakdown, !items.isEmpty {
+            VStack(spacing: 4) {
+                ForEach(items) { item in
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color(hex: item.color))
+                            .frame(width: 6, height: 6)
+                        Text(item.label)
+                            .font(.system(size: 11))
+                            .foregroundColor(.primary.opacity(0.88))
+                        Spacer()
+                        Text(formatTokens(item.tokens))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+        }
+    }
+
+    @ViewBuilder
+    private var cacheSection: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Last Cache")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text(String(format: "%.1f%%", snap?.cacheHitRatio ?? 0))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Session Cache")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text(String(format: "%.1f%%", snap?.sessionCacheHitRatio ?? 0))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("Compactions")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("\(snap?.compactionCount ?? 0)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sessionSection: some View {
+        let dotColor = isLight ? Color(hex: "#0284c7") : Color(hex: "#38bdf8")
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Session")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(action: { store.selectAuto() }) {
+                    HStack(spacing: 3) {
+                        if store.switchingToId == "auto" {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.7)
+                        } else if snap?.mode != "pinned" {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .bold))
+                        }
+                        Text("Auto (Latest)")
+                            .font(.system(size: 10.5, weight: .medium))
+                    }
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(snap?.mode != "pinned" ? usageColor(for: 0, isLight: isLight) : .secondary)
+            }
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(snap?.recent ?? []) { item in
+                        let selected = (item.id == snap?.conversationId)
+                        let loading = (store.switchingToId == item.id)
+                        Button(action: { store.selectSession(item.id) }) {
+                            HStack(spacing: 6) {
+                                if loading {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                        .scaleEffect(0.65)
+                                        .frame(width: 8, height: 8)
+                                } else {
+                                    Circle()
+                                        .fill(selected ? dotColor : Color.clear)
+                                        .frame(width: 5, height: 5)
+                                }
+                                Text(item.title)
+                                    .font(.system(size: 11))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .foregroundColor(selected || loading ? .primary : .secondary)
+                                Spacer()
+                                Text(relativeTime(item.mtime))
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.secondary.opacity(0.75))
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(selected || loading ? Color.primary.opacity(0.08) : Color.clear)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(height: 116)
+        }
+    }
+
+    @ViewBuilder
+    private var footerSection: some View {
+        HStack {
+            Toggle("Show Cache", isOn: $store.showCacheInPill)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+            Spacer()
+            Button("Reset Pos") { store.onResetPosition?() }
+                .buttonStyle(.borderless)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Button("Quit") { store.onQuit?() }
+                .buttonStyle(.borderless)
+                .font(.system(size: 11))
+                .foregroundColor(isLight ? Color(hex: "#dc2626") : Color(hex: "#f87171"))
+        }
     }
 }
 

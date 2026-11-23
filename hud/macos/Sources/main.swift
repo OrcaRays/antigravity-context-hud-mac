@@ -782,10 +782,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let openAbove = (spaceAbove >= 420) || (spaceAbove >= spaceBelow)
 
         if openAbove {
-            let topAnchor = NSRect(x: 0, y: contentView.bounds.maxY + 6, width: contentView.bounds.width, height: 1)
+            let topAnchor = NSRect(x: 0, y: max(0, contentView.bounds.maxY - 1), width: contentView.bounds.width, height: 1)
             popover.show(relativeTo: topAnchor, of: contentView, preferredEdge: .maxY)
         } else {
-            let bottomAnchor = NSRect(x: 0, y: -6, width: contentView.bounds.width, height: 1)
+            let bottomAnchor = NSRect(x: 0, y: 0, width: contentView.bounds.width, height: 1)
             popover.show(relativeTo: bottomAnchor, of: contentView, preferredEdge: .minY)
         }
     }

@@ -4,6 +4,8 @@ A lightweight, native **Swift / AppKit** floating HUD for **Google Antigravity 2
 
 Built cleanly on top of [`ahmetdotsh/agy-context`](https://github.com/ahmetdotsh/agy-context)'s unmodified `analyzer.mjs` engine.
 
+![Antigravity Context HUD floating inside the composer bar](assets/hud-preview.png)
+
 ---
 
 ## Why This Exists

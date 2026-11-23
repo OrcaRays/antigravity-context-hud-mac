@@ -27,13 +27,17 @@ Antigravity 2.0's official Sidecar UI API currently only supports right-hand aux
   - **Auto (Latest)** tracking or 1-click pinning to any recent conversation
 - **Ultra-Lightweight**: Native Swift binary (`LSUIElement`, no Dock icon) + persistent local NDJSON bridge (~36 MB RAM, ~0.1% CPU idle, zero npm dependencies).
 
-## Requirements
+## Download (Recommended)
 
-- **macOS 14+** with Xcode Command Line Tools (`swiftc`)
-- **Node.js 22.5+** (for built-in `node:sqlite`)
-- **Google Antigravity 2.0** desktop app
+Grab the **signed & Apple-notarized Universal `.app`** (`arm64` + `x86_64`, ~283 KB) from the [**Latest Release**](https://github.com/spiljj/antigravity-context-hud-mac/releases/latest):
 
-## Quick Start
+1. Unzip `AntigravityContextHUD-v0.1.0-macos-universal.zip` and drag `AntigravityContextHUD.app` to `/Applications`.
+2. Double-click to launch (requires **macOS 14+** and **Node.js 22.5+**).
+3. Optional: click the menu bar gauge icon → **Start at Login** for zero-friction daily use.
+
+## Build from Source
+
+If you prefer to compile locally (requires **macOS 14+**, **Xcode Command Line Tools**, and **Node.js 22.5+**):
 
 ```bash
 git clone https://github.com/spiljj/antigravity-context-hud-mac.git
@@ -43,11 +47,13 @@ chmod +x hud/build.sh
 open hud/build/AntigravityContextHUD.app
 ```
 
+## Usage
+
 Once launched:
 1. Switch to **Antigravity** — the translucent pill appears near the bottom center of your screen.
 2. **Drag** the pill to wherever you like (for example, just beneath the chat input box).
-3. **Click** the pill to open the breakdown popover and session switcher.
-4. Use the **menu bar gauge icon** anytime to reset position, toggle *Only Show with Antigravity*, or quit.
+3. **Click** the pill to open the breakdown panel and real-title session switcher.
+4. Use the **menu bar gauge icon** anytime to toggle *Show Cache in Pill*, *Auto-Hide Outside Antigravity*, *Start at Login*, reset position, or quit.
 
 ## Architecture & Upstream Sync
 

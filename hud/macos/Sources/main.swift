@@ -183,8 +183,13 @@ final class BridgeStore: ObservableObject {
         stop()
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: nodePath)
-        proc.arguments = [bridgePath]
+        if nodePath == "/usr/bin/env" {
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            proc.arguments = ["node", bridgePath]
+        } else {
+            proc.executableURL = URL(fileURLWithPath: nodePath)
+            proc.arguments = [bridgePath]
+        }
         proc.currentDirectoryURL = URL(fileURLWithPath: bridgePath).deletingLastPathComponent()
 
         let inPipe = Pipe()
@@ -517,7 +522,7 @@ struct DetailPopoverView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 130)
+                .frame(height: 116)
             }
 
             Divider()
@@ -540,6 +545,14 @@ struct DetailPopoverView: View {
         }
         .padding(14)
         .frame(width: 312)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isLight ? Color.white.opacity(0.95) : Color(hex: "#1c1c1e").opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(isLight ? Color.black.opacity(0.12) : Color.white.opacity(0.14), lineWidth: 0.75)
+                )
+        )
     }
 }
 
@@ -596,7 +609,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let antigravityBundleID = "com.google.antigravity"
     private var store: BridgeStore!
     private var panel: HUDPanel!
-    private var popover: NSPopover!
+    private var detailPanel: HUDPanel!
+    private var detailHostingView: NSHostingView<DetailPopoverView>!
+    private var isDetailVisible = false
+    private var globalClickMonitor: Any?
+    private var localKeyMonitor: Any?
     private var statusItem: NSStatusItem!
     private var hostingView: NSHostingView<PillHUDView>!
     private var cancellables = Set<AnyCancellable>()
@@ -616,13 +633,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.resizePanelToFit()
             self?.syncMenuStates()
         }
-        store.onClosePopover = { [weak self] in self?.popover.performClose(nil) }
+        store.onClosePopover = { [weak self] in self?.hideDetailPanel() }
         store.onResetPosition = { [weak self] in self?.resetPanelPosition() }
         store.onQuit = { NSApp.terminate(nil) }
 
         setupStatusItem()
         setupPanel()
-        setupPopover()
+        setupDetailPanel()
         observeActiveApp()
 
         store.start()
@@ -635,6 +652,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func resolveDefaultBridgePath() -> String {
         if let res = Bundle.main.resourcePath {
+            let embedded = (res as NSString).appendingPathComponent("hud/bridge.mjs")
+            if FileManager.default.fileExists(atPath: embedded) {
+                return embedded
+            }
             let bundled = (res as NSString).appendingPathComponent("bridge-path.txt")
             if let path = try? String(contentsOfFile: bundled, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
                FileManager.default.fileExists(atPath: path) {
@@ -645,7 +666,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func resolveNodePath() -> String {
-        let candidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var candidates = [
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            "\(home)/.volta/bin/node",
+            "\(home)/.asdf/shims/node",
+            "/usr/bin/node",
+        ]
+        // Also scan ~/.nvm/versions/node (newest first) for nvm users
+        let nvmDir = "\(home)/.nvm/versions/node"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmDir) {
+            for v in versions.sorted().reversed() {
+                candidates.append("\(nvmDir)/\(v)/bin/node")
+            }
+        }
         for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
             return c
         }
@@ -698,10 +733,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hostingView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
-        container.onClick = { [weak self] in self?.togglePopover() }
-        container.onPositionChanged = { origin in
+        container.onClick = { [weak self] in self?.toggleDetailPanel() }
+        container.onPositionChanged = { [weak self] origin in
             UserDefaults.standard.set(Double(origin.x), forKey: "hudOriginX")
             UserDefaults.standard.set(Double(origin.y), forKey: "hudOriginY")
+            if self?.isDetailVisible == true {
+                self?.positionDetailPanel()
+            }
         }
 
         let initialSize = hostingView.fittingSize
@@ -725,7 +763,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         store.$snapshot.receive(on: DispatchQueue.main).sink { [weak self] _ in
             self?.resizePanelToFit()
+            if self?.isDetailVisible == true {
+                self?.positionDetailPanel()
+            }
         }.store(in: &cancellables)
+    }
+
+    private func setupDetailPanel() {
+        detailHostingView = NSHostingView(rootView: DetailPopoverView(store: store))
+        let size = detailHostingView.fittingSize
+        detailPanel = HUDPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        detailPanel.appearance = nil
+        detailPanel.isOpaque = false
+        detailPanel.backgroundColor = .clear
+        detailPanel.hasShadow = true
+        detailPanel.level = .floating
+        detailPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        detailPanel.contentView = detailHostingView
+    }
+
+    private func positionDetailPanel() {
+        guard let panel, let detailPanel, let detailHostingView else { return }
+        detailHostingView.layoutSubtreeIfNeeded()
+        let size = detailHostingView.fittingSize
+        let screen = panel.screen ?? NSScreen.main
+        let vf = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let gap: CGFloat = 8
+
+        // Anchor bottom edge strictly above the pill's top edge so upward growth NEVER covers the pill.
+        let spaceAbove = vf.maxY - (panel.frame.maxY + gap)
+        let openAbove = (spaceAbove >= size.height) || (spaceAbove >= (panel.frame.minY - vf.minY))
+
+        var x = panel.frame.midX - size.width / 2
+        x = max(vf.minX + 8, min(x, vf.maxX - size.width - 8))
+
+        let y: CGFloat
+        if openAbove {
+            y = panel.frame.maxY + gap
+        } else {
+            y = max(vf.minY + 8, panel.frame.minY - gap - size.height)
+        }
+
+        detailPanel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+    }
+
+    private func showDetailPanel() {
+        positionDetailPanel()
+        detailPanel.orderFrontRegardless()
+        isDetailVisible = true
+
+        if globalClickMonitor == nil {
+            globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                guard let self, self.isDetailVisible else { return }
+                let loc = NSEvent.mouseLocation
+                if !self.detailPanel.frame.contains(loc) && !self.panel.frame.contains(loc) {
+                    self.hideDetailPanel()
+                }
+            }
+        }
+        if localKeyMonitor == nil {
+            localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                if event.keyCode == 53, self?.isDetailVisible == true { // Escape
+                    self?.hideDetailPanel()
+                    return nil
+                }
+                return event
+            }
+        }
+    }
+
+    private func hideDetailPanel() {
+        isDetailVisible = false
+        detailPanel?.orderOut(nil)
+        if let m = globalClickMonitor {
+            NSEvent.removeMonitor(m)
+            globalClickMonitor = nil
+        }
+        if let m = localKeyMonitor {
+            NSEvent.removeMonitor(m)
+            localKeyMonitor = nil
+        }
+    }
+
+    private func toggleDetailPanel() {
+        if isDetailVisible {
+            hideDetailPanel()
+        } else {
+            showDetailPanel()
+        }
     }
 
     private func resizePanelToFit() {
@@ -761,38 +891,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(Double(y), forKey: "hudOriginY")
     }
 
-    private func setupPopover() {
-        popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: DetailPopoverView(store: store))
-    }
-
-    private func togglePopover() {
-        guard let contentView = panel.contentView else { return }
-        if popover.isShown {
-            popover.performClose(nil)
-            return
-        }
-        // Choose edge cleanly away from the pill so the popover never covers the pill.
-        let screen = panel.screen ?? NSScreen.main
-        let vf = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let spaceAbove = vf.maxY - panel.frame.maxY
-        let spaceBelow = panel.frame.minY - vf.minY
-        let openAbove = (spaceAbove >= 420) || (spaceAbove >= spaceBelow)
-
-        if openAbove {
-            let topAnchor = NSRect(x: 0, y: max(0, contentView.bounds.maxY - 1), width: contentView.bounds.width, height: 1)
-            popover.show(relativeTo: topAnchor, of: contentView, preferredEdge: .maxY)
-        } else {
-            let bottomAnchor = NSRect(x: 0, y: 0, width: contentView.bounds.width, height: 1)
-            popover.show(relativeTo: bottomAnchor, of: contentView, preferredEdge: .minY)
-        }
-    }
-
     @objc private func togglePopoverFromMenu() {
         panel.orderFrontRegardless()
-        togglePopover()
+        toggleDetailPanel()
     }
 
     @objc private func toggleShowCache(_ sender: NSMenuItem) {
@@ -834,10 +935,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let own = Bundle.main.bundleIdentifier ?? ""
-        if front == antigravityBundleID || front == own || popover.isShown {
+        if front == antigravityBundleID || front == own || isDetailVisible {
             panel.orderFrontRegardless()
         } else {
-            popover.performClose(nil)
+            hideDetailPanel()
             panel.orderOut(nil)
         }
     }

@@ -3,24 +3,32 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="AntigravityContextHUD"
+VERSION="${VERSION:-0.1.0}"
+UNIVERSAL="${UNIVERSAL:-0}"
 BUILD_DIR="$ROOT/hud/build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RES_DIR="$CONTENTS/Resources"
 
-mkdir -p "$MACOS_DIR" "$RES_DIR"
+rm -rf "$APP_BUNDLE"
+mkdir -p "$MACOS_DIR" "$RES_DIR/hud" "$RES_DIR/sidecars/context_panel"
 
-echo "Compiling $APP_NAME..."
-swiftc \
-  -O \
-  -framework AppKit \
-  -framework SwiftUI \
-  -framework Combine \
-  "$ROOT/hud/macos/Sources/main.swift" \
-  -o "$MACOS_DIR/$APP_NAME"
+SRC="$ROOT/hud/macos/Sources/main.swift"
+FRAMEWORKS=(-framework AppKit -framework SwiftUI -framework Combine)
 
-cat > "$CONTENTS/Info.plist" <<'PLIST'
+if [ "$UNIVERSAL" = "1" ]; then
+  echo "Compiling $APP_NAME (Universal: arm64 + x86_64)..."
+  swiftc -O -target arm64-apple-macosx14.0 "${FRAMEWORKS[@]}" "$SRC" -o "$BUILD_DIR/${APP_NAME}-arm64"
+  swiftc -O -target x86_64-apple-macosx14.0 "${FRAMEWORKS[@]}" "$SRC" -o "$BUILD_DIR/${APP_NAME}-x86_64"
+  lipo -create "$BUILD_DIR/${APP_NAME}-arm64" "$BUILD_DIR/${APP_NAME}-x86_64" -output "$MACOS_DIR/$APP_NAME"
+  rm -f "$BUILD_DIR/${APP_NAME}-arm64" "$BUILD_DIR/${APP_NAME}-x86_64"
+else
+  echo "Compiling $APP_NAME ($(uname -m))..."
+  swiftc -O "${FRAMEWORKS[@]}" "$SRC" -o "$MACOS_DIR/$APP_NAME"
+fi
+
+cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -34,9 +42,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>
@@ -47,7 +55,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Store the repo's bridge.mjs absolute path so launching the .app directly finds the upstream analyzer.mjs
-printf '%s\n' "$ROOT/hud/bridge.mjs" > "$RES_DIR/bridge-path.txt"
+# Bundle bridge.mjs and unmodified upstream analyzer.mjs so the .app is 100% self-contained.
+cp "$ROOT/hud/bridge.mjs" "$RES_DIR/hud/bridge.mjs"
+cp "$ROOT/sidecars/context_panel/analyzer.mjs" "$RES_DIR/sidecars/context_panel/analyzer.mjs"
+chmod +x "$RES_DIR/hud/bridge.mjs"
 
-echo "Built: $APP_BUNDLE"
+echo "Built self-contained app: $APP_BUNDLE"

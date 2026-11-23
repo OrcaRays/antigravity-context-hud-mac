@@ -22,6 +22,7 @@ struct RecentSession: Codable, Identifiable, Equatable {
 struct ContextSnapshot: Codable, Equatable {
     let found: Bool
     let mode: String?
+    let autoSource: String?
     let pinnedId: String?
     let conversationId: String?
     let title: String?
@@ -156,6 +157,9 @@ final class BridgeStore: ObservableObject {
     var onClosePopover: (() -> Void)?
     var onResetPosition: (() -> Void)?
     var onQuit: (() -> Void)?
+    var currentWindowTitleProvider: (() -> String?)?
+
+    private var lastSentWindowTitle: String = ""
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -247,7 +251,19 @@ final class BridgeStore: ObservableObject {
 
     func selectAuto() {
         switchingToId = "auto"
-        sendCommand(["cmd": "auto"])
+        var payload = ["cmd": "auto"]
+        if let title = currentWindowTitleProvider?(), !title.isEmpty {
+            payload["windowTitle"] = title
+            lastSentWindowTitle = title
+        }
+        sendCommand(payload)
+    }
+
+    func updateWindowTitle(_ title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != lastSentWindowTitle else { return }
+        lastSentWindowTitle = trimmed
+        sendCommand(["cmd": "windowTitle", "title": trimmed])
     }
 
     func selectSession(_ id: String) {
@@ -386,7 +402,10 @@ struct DetailPopoverView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(snap?.modelLabel ?? "Antigravity Context")
                     .font(.system(size: 13, weight: .semibold))
-                Text("\(formatCap(limit)) compaction cap · \(snap?.mode == "pinned" ? "Pinned" : "Auto latest")")
+                let modeLabel = snap?.mode == "pinned"
+                    ? "Pinned"
+                    : (snap?.autoSource == "window" ? "Auto · Window" : "Auto · Latest")
+                Text("\(formatCap(limit)) compaction cap · \(modeLabel)")
                     .font(.system(size: 10.5))
                     .foregroundColor(.secondary)
             }
@@ -635,6 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isDetailVisible = false
     private var globalClickMonitor: Any?
     private var localKeyMonitor: Any?
+    private var windowTitleTimer: Timer?
     private var statusItem: NSStatusItem!
     private var hostingView: NSHostingView<PillHUDView>!
     private var cancellables = Set<AnyCancellable>()
@@ -657,6 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onClosePopover = { [weak self] in self?.hideDetailPanel() }
         store.onResetPosition = { [weak self] in self?.resetPanelPosition() }
         store.onQuit = { NSApp.terminate(nil) }
+        store.currentWindowTitleProvider = { [weak self] in self?.frontmostAntigravityWindowTitle() }
 
         setupStatusItem()
         setupPanel()
@@ -664,7 +685,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeActiveApp()
 
         store.start()
+        startWindowTitleTracking()
         updateHUDVisibility()
+    }
+
+    private func frontmostAntigravityWindowTitle() -> String? {
+        let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let list = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for w in list {
+            let owner = (w[kCGWindowOwnerName as String] as? String) ?? ""
+            guard owner == "Antigravity" else { continue }
+            let layer = (w[kCGWindowLayer as String] as? Int) ?? -1
+            guard layer == 0 else { continue }
+            if let name = w[kCGWindowName as String] as? String, !name.isEmpty, name != "Antigravity" {
+                return name
+            }
+        }
+        return nil
+    }
+
+    private func startWindowTitleTracking() {
+        windowTitleTimer?.invalidate()
+        windowTitleTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            self?.syncWindowTitleIfNeeded()
+        }
+        syncWindowTitleIfNeeded()
+    }
+
+    private func syncWindowTitleIfNeeded() {
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let own = Bundle.main.bundleIdentifier ?? ""
+        guard front == antigravityBundleID || front == own || !store.autoHideOutsideAntigravity else { return }
+        if let title = frontmostAntigravityWindowTitle() {
+            store.updateWindowTitle(title)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -947,6 +1003,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func activeAppChanged() {
         updateHUDVisibility()
+        syncWindowTitleIfNeeded()
     }
 
     private func updateHUDVisibility() {

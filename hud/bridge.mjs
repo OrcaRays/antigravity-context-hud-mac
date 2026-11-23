@@ -30,6 +30,7 @@ const POLL_MS = 1500;
 const RECENT_LIMIT = 10;
 
 let pinnedId = null;
+let currentWindowTitle = '';
 let lastSig = '';
 let busy = false;
 let pendingForce = false;
@@ -55,7 +56,7 @@ function loadConversationSummaries(appData) {
     db = new DatabaseSync(dbPath, { readOnly: true });
     const rows = db
       .prepare(
-        'SELECT conversation_id, title, parent_conversation_id, nesting_depth, workspace_uris FROM conversation_summaries'
+        'SELECT conversation_id, title, parent_conversation_id, nesting_depth, workspace_uris, last_modified_time FROM conversation_summaries'
       )
       .all();
     for (const r of rows) {
@@ -71,6 +72,7 @@ function loadConversationSummaries(appData) {
         title: typeof r.title === 'string' ? r.title.trim() : '',
         isSubagent: Boolean(r.parent_conversation_id) || Number(r.nesting_depth || 0) > 0,
         workspaceUris,
+        lastModified: typeof r.last_modified_time === 'string' ? r.last_modified_time : '',
       });
     }
   } catch {
@@ -149,6 +151,44 @@ function readConversationTitle(appData, convId, summaries) {
   return title;
 }
 
+function findSessionByWindowTitle(winTitle, allRaw, getSummaries) {
+  if (!winTitle || typeof winTitle !== 'string') return null;
+  const cleaned = winTitle.trim();
+  if (!cleaned || cleaned === 'Antigravity') return null;
+
+  // Antigravity window titles look like "<Session Title> - <Workspace>" (sometimes truncated with "...").
+  const prefix = cleaned.split(' - ')[0].trim();
+  const prefixNoEllipsis = prefix.replace(/(?:\.\.\.|…)+$/, '').trim();
+  if (!prefixNoEllipsis) return null;
+
+  // Search across all appData summary maps (even older sessions not in top 30 by mtime).
+  const appDataDirs = [...new Set(allRaw.map((r) => r.appData))];
+  let best = null;
+  let bestScore = -1;
+  let bestTime = '';
+
+  for (const appData of appDataDirs) {
+    const summaries = getSummaries(appData);
+    for (const [id, meta] of summaries.entries()) {
+      if (meta.isSubagent || !meta.title) continue;
+      let score = -1;
+      if (meta.title === prefix || meta.title === cleaned) {
+        score = 3;
+      } else if (prefixNoEllipsis.length >= 4 && meta.title.startsWith(prefixNoEllipsis)) {
+        score = 2;
+      } else if (meta.title.length >= 4 && cleaned.startsWith(meta.title)) {
+        score = 1;
+      }
+      if (score > bestScore || (score === bestScore && score > 0 && meta.lastModified > bestTime)) {
+        bestScore = score;
+        bestTime = meta.lastModified;
+        best = { id, appData };
+      }
+    }
+  }
+  return best;
+}
+
 async function buildPayload() {
   // Fetch extra candidates so filtering out subagents still leaves RECENT_LIMIT real conversations.
   const allRaw = listRecentConversations(RECENT_LIMIT * 3);
@@ -171,8 +211,16 @@ async function buildPayload() {
   }));
 
   let target = null;
+  let autoSource = 'latest';
   if (pinnedId && ID_RE.test(pinnedId)) {
     target = recentRaw.find((r) => r.id === pinnedId) || allRaw.find((r) => r.id === pinnedId) || null;
+  }
+  if (!target && !pinnedId && currentWindowTitle) {
+    const matched = findSessionByWindowTitle(currentWindowTitle, allRaw, getSummaries);
+    if (matched) {
+      target = matched;
+      autoSource = 'window';
+    }
   }
   if (!target) {
     target = recentRaw[0] || allRaw[0] || null;
@@ -230,6 +278,7 @@ async function buildPayload() {
   return {
     found: true,
     mode: pinnedId ? 'pinned' : 'auto',
+    autoSource,
     pinnedId,
     conversationId: target.id,
     title: readConversationTitle(target.appData, target.id, getSummaries(target.appData)),
@@ -302,7 +351,16 @@ rl.on('line', (line) => {
     const msg = JSON.parse(trimmed);
     if (msg.cmd === 'auto') {
       pinnedId = null;
+      if (typeof msg.windowTitle === 'string') {
+        currentWindowTitle = msg.windowTitle.trim();
+      }
       tick(true);
+    } else if (msg.cmd === 'windowTitle' && typeof msg.title === 'string') {
+      const next = msg.title.trim();
+      if (next !== currentWindowTitle) {
+        currentWindowTitle = next;
+        if (!pinnedId) tick(true);
+      }
     } else if (msg.cmd === 'select' && typeof msg.id === 'string' && ID_RE.test(msg.id)) {
       pinnedId = msg.id;
       tick(true);

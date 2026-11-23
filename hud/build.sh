@@ -35,6 +35,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <dict>
   <key>CFBundleExecutable</key>
   <string>AntigravityContextHUD</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
   <string>dev.agy-context.hud</string>
   <key>CFBundleName</key>
@@ -54,6 +56,11 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Bundle app icon if present
+if [ -f "$ROOT/hud/macos/Resources/AppIcon.icns" ]; then
+  cp "$ROOT/hud/macos/Resources/AppIcon.icns" "$RES_DIR/AppIcon.icns"
+fi
 
 # Bundle bridge.mjs and unmodified upstream analyzer.mjs so the .app is 100% self-contained.
 cp "$ROOT/hud/bridge.mjs" "$RES_DIR/hud/bridge.mjs"

@@ -31,9 +31,20 @@ const RECENT_LIMIT = 10;
 let pinnedId = null;
 let lastSig = '';
 let busy = false;
+let pendingForce = false;
 let shuttingDown = false;
 
 const titleCache = new Map(); // convId -> { fp, title }
+const snapCache = new Map(); // convId -> { fp, data }
+
+function conversationFingerprint(appData, convId) {
+  const db = statOf(join(appData, 'conversations', `${convId}.db`));
+  const wal = statOf(join(appData, 'conversations', `${convId}.db-wal`));
+  const logsDir = join(appData, 'brain', convId, '.system_generated', 'logs');
+  const full = statOf(join(logsDir, 'transcript_full.jsonl'));
+  const compact = statOf(join(logsDir, 'transcript.jsonl'));
+  return `${db.mtime}:${db.size}|${wal.mtime}:${wal.size}|${full.mtime}:${full.size}|${compact.mtime}:${compact.size}`;
+}
 
 function readConversationTitle(appData, convId) {
   const logPath = join(appData, 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
@@ -113,7 +124,18 @@ async function buildPayload() {
     };
   }
 
-  const snap = await analyzeConversation(target.appData, target.id, {});
+  const fp = conversationFingerprint(target.appData, target.id);
+  let snap;
+  const cachedSnap = snapCache.get(target.id);
+  if (cachedSnap && cachedSnap.fp === fp) {
+    snap = cachedSnap.data;
+  } else {
+    snap = await analyzeConversation(target.appData, target.id, {});
+    if (snap.found) {
+      if (snapCache.size > 20) snapCache.clear();
+      snapCache.set(target.id, { fp, data: snap });
+    }
+  }
   if (!snap.found) {
     return {
       found: false,
@@ -180,7 +202,10 @@ function signatureOf(payload) {
 }
 
 async function tick(force = false) {
-  if (busy) return;
+  if (busy) {
+    if (force) pendingForce = true;
+    return;
+  }
   busy = true;
   try {
     const payload = await buildPayload();
@@ -193,7 +218,13 @@ async function tick(force = false) {
     process.stdout.write(`${JSON.stringify({ found: false, error: String(err?.message || err) })}\n`);
   } finally {
     busy = false;
-    if (shuttingDown) process.exit(0);
+    if (shuttingDown) {
+      process.exit(0);
+    }
+    if (pendingForce) {
+      pendingForce = false;
+      setImmediate(() => tick(true));
+    }
   }
 }
 

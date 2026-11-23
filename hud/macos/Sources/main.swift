@@ -86,10 +86,48 @@ extension Color {
     }
 }
 
-func usageColor(for percent: Double) -> Color {
-    if percent >= 80 { return Color(hex: "#f87171") } // Coral red
-    if percent >= 60 { return Color(hex: "#fbbf24") } // Amber
-    return Color(hex: "#34d399") // Emerald
+func usageColor(for percent: Double, isLight: Bool) -> Color {
+    if percent >= 80 {
+        return isLight ? Color(hex: "#dc2626") : Color(hex: "#f87171")
+    }
+    if percent >= 60 {
+        return isLight ? Color(hex: "#d97706") : Color(hex: "#fbbf24")
+    }
+    return isLight ? Color(hex: "#059669") : Color(hex: "#34d399")
+}
+
+// MARK: - LaunchAgent Helper (Start at Login)
+
+enum LoginItemManager {
+    static let label = "dev.agy-context.hud"
+
+    static var plistURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+    }
+
+    static var isEnabled: Bool {
+        FileManager.default.fileExists(atPath: plistURL.path)
+    }
+
+    static func setEnabled(_ enabled: Bool) {
+        let fm = FileManager.default
+        if enabled {
+            let appPath = Bundle.main.bundlePath
+            let plist: [String: Any] = [
+                "Label": label,
+                "ProgramArguments": ["/usr/bin/open", "-a", appPath],
+                "RunAtLoad": true,
+                "KeepAlive": false,
+            ]
+            try? fm.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+                try? data.write(to: plistURL, options: .atomic)
+            }
+        } else {
+            try? fm.removeItem(at: plistURL)
+        }
+    }
 }
 
 // MARK: - Bridge Store
@@ -97,14 +135,25 @@ func usageColor(for percent: Double) -> Color {
 final class BridgeStore: ObservableObject {
     @Published var snapshot: ContextSnapshot?
     @Published var bridgeStatus: String = "Connecting…"
-    @Published var onlyWithAntigravity: Bool {
+    @Published var switchingToId: String? = nil
+
+    @Published var autoHideOutsideAntigravity: Bool {
         didSet {
-            UserDefaults.standard.set(onlyWithAntigravity, forKey: "onlyWithAntigravity")
+            UserDefaults.standard.set(autoHideOutsideAntigravity, forKey: "onlyWithAntigravity")
             onVisibilityPreferenceChanged?()
         }
     }
 
+    @Published var showCacheInPill: Bool {
+        didSet {
+            UserDefaults.standard.set(showCacheInPill, forKey: "showCacheInPill")
+            onPillLayoutChanged?()
+        }
+    }
+
     var onVisibilityPreferenceChanged: (() -> Void)?
+    var onPillLayoutChanged: (() -> Void)?
+    var onClosePopover: (() -> Void)?
     var onResetPosition: (() -> Void)?
     var onQuit: (() -> Void)?
 
@@ -119,9 +168,14 @@ final class BridgeStore: ObservableObject {
         self.bridgePath = bridgePath
         self.nodePath = nodePath
         if UserDefaults.standard.object(forKey: "onlyWithAntigravity") == nil {
-            self.onlyWithAntigravity = true
+            self.autoHideOutsideAntigravity = true
         } else {
-            self.onlyWithAntigravity = UserDefaults.standard.bool(forKey: "onlyWithAntigravity")
+            self.autoHideOutsideAntigravity = UserDefaults.standard.bool(forKey: "onlyWithAntigravity")
+        }
+        if UserDefaults.standard.object(forKey: "showCacheInPill") == nil {
+            self.showCacheInPill = false
+        } else {
+            self.showCacheInPill = UserDefaults.standard.bool(forKey: "showCacheInPill")
         }
     }
 
@@ -187,10 +241,12 @@ final class BridgeStore: ObservableObject {
     }
 
     func selectAuto() {
+        switchingToId = "auto"
         sendCommand(["cmd": "auto"])
     }
 
     func selectSession(_ id: String) {
+        switchingToId = id
         sendCommand(["cmd": "select", "id": id])
     }
 
@@ -202,6 +258,7 @@ final class BridgeStore: ObservableObject {
             guard !lineData.isEmpty else { continue }
             if let decoded = try? JSONDecoder().decode(ContextSnapshot.self, from: lineData) {
                 self.snapshot = decoded
+                self.switchingToId = nil
                 self.bridgeStatus = decoded.found ? "Live" : (decoded.error ?? "No active session")
             }
         }
@@ -212,58 +269,68 @@ final class BridgeStore: ObservableObject {
 
 struct PillHUDView: View {
     @ObservedObject var store: BridgeStore
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let isLight = (colorScheme == .light)
         let snap = store.snapshot
         let used = snap?.usedTokens ?? 0
         let limit = snap?.contextLimit ?? 512_000
         let pct = snap?.percent ?? 0
         let cache = snap?.cacheHitRatio ?? 0
         let isPinned = (snap?.mode == "pinned")
-        let accent = usageColor(for: pct)
+        let accent = usageColor(for: pct, isLight: isLight)
 
-        HStack(spacing: 8) {
+        let bgColor = isLight ? Color.white.opacity(0.90) : Color.black.opacity(0.76)
+        let borderColor = isLight ? Color.black.opacity(0.12) : Color.white.opacity(0.16)
+        let primaryText = isLight ? Color.black.opacity(0.88) : Color.white.opacity(0.95)
+        let secondaryText = isLight ? Color.black.opacity(0.56) : Color.white.opacity(0.70)
+        let dividerColor = isLight ? Color.black.opacity(0.14) : Color.white.opacity(0.16)
+
+        HStack(spacing: 7) {
             Circle()
                 .fill(snap?.found == true ? accent : Color.gray.opacity(0.6))
                 .frame(width: 7, height: 7)
-                .shadow(color: accent.opacity(0.6), radius: 3)
+                .shadow(color: accent.opacity(isLight ? 0.30 : 0.60), radius: 2.5)
 
             if snap?.found == true {
                 Text("\(formatTokens(used)) / \(formatCap(limit))")
                     .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.95))
+                    .foregroundColor(primaryText)
 
                 Text("\(Int(round(pct)))%")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(accent)
 
-                Rectangle()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(width: 1, height: 11)
+                if store.showCacheInPill {
+                    Rectangle()
+                        .fill(dividerColor)
+                        .frame(width: 1, height: 11)
 
-                Text("Cache \(Int(round(cache)))%")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.72))
+                    Text("Cache \(Int(round(cache)))%")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(secondaryText)
+                }
 
                 if isPinned {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 9))
-                        .foregroundColor(Color(hex: "#38bdf8"))
+                        .foregroundColor(isLight ? Color(hex: "#0284c7") : Color(hex: "#38bdf8"))
                 }
             } else {
                 Text(store.bridgeStatus)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.75))
+                    .foregroundColor(secondaryText)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 11)
         .padding(.vertical, 6)
         .background(
             Capsule()
-                .fill(Color.black.opacity(0.72))
+                .fill(bgColor)
                 .overlay(
                     Capsule()
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.75)
+                        .strokeBorder(borderColor, lineWidth: 0.75)
                 )
         )
         .fixedSize()
@@ -272,18 +339,20 @@ struct PillHUDView: View {
 
 struct DetailPopoverView: View {
     @ObservedObject var store: BridgeStore
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let isLight = (colorScheme == .light)
         let snap = store.snapshot
         let used = snap?.usedTokens ?? 0
         let limit = snap?.contextLimit ?? 512_000
         let free = snap?.freeSpace ?? max(0, limit - used)
         let pct = snap?.percent ?? 0
-        let accent = usageColor(for: pct)
+        let accent = usageColor(for: pct, isLight: isLight)
 
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 11) {
             // Header
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(snap?.modelLabel ?? "Antigravity Context")
                         .font(.system(size: 13, weight: .semibold))
@@ -293,8 +362,16 @@ struct DetailPopoverView: View {
                 }
                 Spacer()
                 Text(String(format: "%.1f%%", pct))
-                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
                     .foregroundColor(accent)
+
+                Button(action: { store.onClosePopover?() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary.opacity(0.75))
+                }
+                .buttonStyle(.plain)
+                .help("Close")
             }
 
             // Segmented Bar
@@ -386,7 +463,11 @@ struct DetailPopoverView: View {
                     Spacer()
                     Button(action: { store.selectAuto() }) {
                         HStack(spacing: 3) {
-                            if snap?.mode != "pinned" {
+                            if store.switchingToId == "auto" {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .scaleEffect(0.7)
+                            } else if snap?.mode != "pinned" {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 9, weight: .bold))
                             }
@@ -395,23 +476,31 @@ struct DetailPopoverView: View {
                         }
                     }
                     .buttonStyle(.borderless)
-                    .foregroundColor(snap?.mode != "pinned" ? Color(hex: "#34d399") : .secondary)
+                    .foregroundColor(snap?.mode != "pinned" ? usageColor(for: 0, isLight: isLight) : .secondary)
                 }
 
                 ScrollView {
                     VStack(spacing: 2) {
                         ForEach(snap?.recent ?? []) { item in
                             let selected = (item.id == snap?.conversationId)
+                            let loading = (store.switchingToId == item.id)
                             Button(action: { store.selectSession(item.id) }) {
                                 HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(selected ? Color(hex: "#38bdf8") : Color.clear)
-                                        .frame(width: 5, height: 5)
+                                    if loading {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                            .scaleEffect(0.65)
+                                            .frame(width: 8, height: 8)
+                                    } else {
+                                        Circle()
+                                            .fill(selected ? (isLight ? Color(hex: "#0284c7") : Color(hex: "#38bdf8")) : Color.clear)
+                                            .frame(width: 5, height: 5)
+                                    }
                                     Text(item.title)
                                         .font(.system(size: 11))
                                         .lineLimit(1)
                                         .truncationMode(.tail)
-                                        .foregroundColor(selected ? .primary : .secondary)
+                                        .foregroundColor(selected || loading ? .primary : .secondary)
                                     Spacer()
                                     Text(relativeTime(item.mtime))
                                         .font(.system(size: 10, design: .monospaced))
@@ -421,7 +510,7 @@ struct DetailPopoverView: View {
                                 .padding(.vertical, 4)
                                 .background(
                                     RoundedRectangle(cornerRadius: 5)
-                                        .fill(selected ? Color.primary.opacity(0.08) : Color.clear)
+                                        .fill(selected || loading ? Color.primary.opacity(0.08) : Color.clear)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -435,7 +524,7 @@ struct DetailPopoverView: View {
 
             // Footer
             HStack {
-                Toggle("Only with Antigravity", isOn: $store.onlyWithAntigravity)
+                Toggle("Show Cache", isOn: $store.showCacheInPill)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 11))
                 Spacer()
@@ -446,11 +535,11 @@ struct DetailPopoverView: View {
                 Button("Quit") { store.onQuit?() }
                     .buttonStyle(.borderless)
                     .font(.system(size: 11))
-                    .foregroundColor(Color(hex: "#f87171"))
+                    .foregroundColor(isLight ? Color(hex: "#dc2626") : Color(hex: "#f87171"))
             }
         }
         .padding(14)
-        .frame(width: 310)
+        .frame(width: 312)
     }
 }
 
@@ -510,7 +599,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var statusItem: NSStatusItem!
     private var hostingView: NSHostingView<PillHUDView>!
-    private var cancellable: AnyCancellable?
+    private var cancellables = Set<AnyCancellable>()
+
+    private var showCacheMenuItem: NSMenuItem!
+    private var autoHideMenuItem: NSMenuItem!
+    private var loginItemMenuItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let env = ProcessInfo.processInfo.environment
@@ -519,6 +612,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         store = BridgeStore(bridgePath: bridgePath, nodePath: nodePath)
         store.onVisibilityPreferenceChanged = { [weak self] in self?.updateHUDVisibility() }
+        store.onPillLayoutChanged = { [weak self] in
+            self?.resizePanelToFit()
+            self?.syncMenuStates()
+        }
+        store.onClosePopover = { [weak self] in self?.popover.performClose(nil) }
         store.onResetPosition = { [weak self] in self?.resetPanelPosition() }
         store.onQuit = { NSApp.terminate(nil) }
 
@@ -564,12 +662,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Toggle Details Popover", action: #selector(togglePopoverFromMenu), keyEquivalent: "")
         menu.addItem(withTitle: "Reset HUD Position", action: #selector(resetPanelPosition), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
-        let onlyItem = NSMenuItem(title: "Only Show with Antigravity", action: #selector(toggleOnlyWithAntigravity(_:)), keyEquivalent: "")
-        onlyItem.state = store.onlyWithAntigravity ? .on : .off
-        menu.addItem(onlyItem)
+
+        showCacheMenuItem = NSMenuItem(title: "Show Cache in Pill", action: #selector(toggleShowCache(_:)), keyEquivalent: "")
+        menu.addItem(showCacheMenuItem)
+
+        autoHideMenuItem = NSMenuItem(title: "Auto-Hide Outside Antigravity", action: #selector(toggleAutoHide(_:)), keyEquivalent: "")
+        menu.addItem(autoHideMenuItem)
+
+        loginItemMenuItem = NSMenuItem(title: "Start at Login", action: #selector(toggleStartAtLogin(_:)), keyEquivalent: "")
+        menu.addItem(loginItemMenuItem)
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit Antigravity Context HUD", action: #selector(quitApp), keyEquivalent: "q")
+
         statusItem.menu = menu
+        syncMenuStates()
+    }
+
+    private func syncMenuStates() {
+        showCacheMenuItem?.state = store.showCacheInPill ? .on : .off
+        autoHideMenuItem?.state = store.autoHideOutsideAntigravity ? .on : .off
+        loginItemMenuItem?.state = LoginItemManager.isEnabled ? .on : .off
     }
 
     private func setupPanel() {
@@ -598,19 +711,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
+        panel.appearance = nil // Automatically track system Light / Dark mode
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        // `.transient` cleanly hides the overlay during Mission Control / 3-finger pinch out
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         panel.isMovableByWindowBackground = false
         panel.contentView = container
 
         restoreOrDefaultPosition()
 
-        cancellable = store.$snapshot.receive(on: DispatchQueue.main).sink { [weak self] _ in
+        store.$snapshot.receive(on: DispatchQueue.main).sink { [weak self] _ in
             self?.resizePanelToFit()
-        }
+        }.store(in: &cancellables)
     }
 
     private func resizePanelToFit() {
@@ -639,7 +754,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let screen = NSScreen.main else { return }
         let vf = screen.visibleFrame
         let size = hostingView.fittingSize
-        // Default: centered near bottom (right where Antigravity's composer footer sits)
         let x = vf.midX - size.width / 2
         let y = vf.minY + 18
         panel.setFrameOrigin(NSPoint(x: x, y: y))
@@ -658,8 +772,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let contentView = panel.contentView else { return }
         if popover.isShown {
             popover.performClose(nil)
+            return
+        }
+        // Choose edge cleanly away from the pill so the popover never covers the pill.
+        let screen = panel.screen ?? NSScreen.main
+        let vf = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let spaceAbove = vf.maxY - panel.frame.maxY
+        let spaceBelow = panel.frame.minY - vf.minY
+        let openAbove = (spaceAbove >= 420) || (spaceAbove >= spaceBelow)
+
+        if openAbove {
+            let topAnchor = NSRect(x: 0, y: contentView.bounds.maxY + 6, width: contentView.bounds.width, height: 1)
+            popover.show(relativeTo: topAnchor, of: contentView, preferredEdge: .maxY)
         } else {
-            popover.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .maxY)
+            let bottomAnchor = NSRect(x: 0, y: -6, width: contentView.bounds.width, height: 1)
+            popover.show(relativeTo: bottomAnchor, of: contentView, preferredEdge: .minY)
         }
     }
 
@@ -668,9 +795,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         togglePopover()
     }
 
-    @objc private func toggleOnlyWithAntigravity(_ sender: NSMenuItem) {
-        store.onlyWithAntigravity.toggle()
-        sender.state = store.onlyWithAntigravity ? .on : .off
+    @objc private func toggleShowCache(_ sender: NSMenuItem) {
+        store.showCacheInPill.toggle()
+        syncMenuStates()
+    }
+
+    @objc private func toggleAutoHide(_ sender: NSMenuItem) {
+        store.autoHideOutsideAntigravity.toggle()
+        syncMenuStates()
+    }
+
+    @objc private func toggleStartAtLogin(_ sender: NSMenuItem) {
+        LoginItemManager.setEnabled(!LoginItemManager.isEnabled)
+        syncMenuStates()
     }
 
     @objc private func quitApp() {
@@ -691,7 +828,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateHUDVisibility() {
-        if !store.onlyWithAntigravity {
+        if !store.autoHideOutsideAntigravity {
             panel.orderFrontRegardless()
             return
         }

@@ -17,7 +17,7 @@ Antigravity 2.0's official Sidecar UI API currently only supports right-hand aux
 
 ## Requirements
 
-- macOS 14+ with Xcode Command Line Tools (`swiftc`)
+- macOS 13+ with Xcode Command Line Tools (`swiftc`)
 - Node.js 22.5+ (for built-in `node:sqlite`)
 
 ## Build & Run

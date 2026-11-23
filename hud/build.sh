@@ -18,14 +18,14 @@ SRC="$ROOT/hud/macos/Sources/main.swift"
 FRAMEWORKS=(-framework AppKit -framework SwiftUI -framework Combine)
 
 if [ "$UNIVERSAL" = "1" ]; then
-  echo "Compiling $APP_NAME (Universal: arm64 + x86_64)..."
-  swiftc -O -target arm64-apple-macosx14.0 "${FRAMEWORKS[@]}" "$SRC" -o "$BUILD_DIR/${APP_NAME}-arm64"
-  swiftc -O -target x86_64-apple-macosx14.0 "${FRAMEWORKS[@]}" "$SRC" -o "$BUILD_DIR/${APP_NAME}-x86_64"
+  echo "Compiling $APP_NAME (Universal: arm64 + x86_64, macOS 13.0+)..."
+  swiftc -O -target arm64-apple-macosx13.0 "${FRAMEWORKS[@]}" "$SRC" -o "$BUILD_DIR/${APP_NAME}-arm64"
+  swiftc -O -target x86_64-apple-macosx13.0 "${FRAMEWORKS[@]}" "$SRC" -o "$BUILD_DIR/${APP_NAME}-x86_64"
   lipo -create "$BUILD_DIR/${APP_NAME}-arm64" "$BUILD_DIR/${APP_NAME}-x86_64" -output "$MACOS_DIR/$APP_NAME"
   rm -f "$BUILD_DIR/${APP_NAME}-arm64" "$BUILD_DIR/${APP_NAME}-x86_64"
 else
-  echo "Compiling $APP_NAME ($(uname -m))..."
-  swiftc -O "${FRAMEWORKS[@]}" "$SRC" -o "$MACOS_DIR/$APP_NAME"
+  echo "Compiling $APP_NAME ($(uname -m), macOS 13.0+)..."
+  swiftc -O -target "$(uname -m)-apple-macosx13.0" "${FRAMEWORKS[@]}" "$SRC" -o "$MACOS_DIR/$APP_NAME"
 fi
 
 cat > "$CONTENTS/Info.plist" <<PLIST
@@ -48,7 +48,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>CFBundleVersion</key>
   <string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key>
-  <string>14.0</string>
+  <string>13.0</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSHighResolutionCapable</key>

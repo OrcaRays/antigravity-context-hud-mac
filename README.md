@@ -41,7 +41,7 @@ Antigravity 2.0's official Sidecar UI API currently only supports right-hand aux
 
 ## Download (Recommended)
 
-Grab the **signed & Apple-notarized Universal `.app`** (`arm64` + `x86_64`, ~283 KB) from the [**Latest Release**](https://github.com/OrcaRays/antigravity-context-hud-mac/releases/latest):
+Grab the **signed & Apple-notarized Universal `.app`** (`arm64` + `x86_64`, ~2 MB) from the [**Latest Release**](https://github.com/OrcaRays/antigravity-context-hud-mac/releases/latest):
 
 1. Unzip `AntigravityContextHUD-v*.zip` and drag `AntigravityContextHUD.app` to `/Applications`.
 2. Double-click to launch (requires **macOS 13+** and **Node.js 22.5+**).

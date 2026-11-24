@@ -1,6 +1,17 @@
-# Antigravity Context HUD for macOS
+<p align="center">
+  <img src="assets/app-icon.png" width="96" height="96" alt="Antigravity Context HUD App Icon" />
+</p>
 
-A lightweight, native **Swift / AppKit** floating HUD for **Google Antigravity 2.0** on macOS — see your live context usage, actual compaction cap (`256K` / `512K`), and prompt cache hit rate right beneath the input box, **without patching or modifying the Antigravity app**.
+<h1 align="center">Antigravity Context HUD for macOS</h1>
+
+<p align="center">
+  A lightweight, native <strong>Swift / AppKit</strong> floating HUD for <strong>Google Antigravity 2.0</strong> on macOS.<br />
+  Live context usage, actual compaction cap (<code>256K</code> / <code>512K</code>), prompt cache stats, and estimated API value — <strong>zero client patching</strong>.
+</p>
+
+<p align="center">
+  <a href="https://github.com/OrcaRays/antigravity-context-hud-mac/releases/latest"><strong>Download Latest Release (Signed &amp; Notarized · macOS 13+ Universal)</strong></a>
+</p>
 
 Built cleanly on top of [`ahmetdotsh/agy-context`](https://github.com/ahmetdotsh/agy-context)'s unmodified `analyzer.mjs` engine.
 
